@@ -1,19 +1,14 @@
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
-
-const defaultPhrasePool = [
-  { gibberish: "Eye Mull of Mush Sheen", answer: "I'm a love machine", hint: "Song lyric" },
-  { gibberish: "Yore Luke Ink Hood", answer: "You're looking good", hint: "Compliment" },
-  { gibberish: "Sew Fur Sigh Tee", answer: "Super society", hint: "Community" }
-];
+import phrasePool from "./phrasePool.json";
 
 function getDailyPhrases(pool) {
   if (!Array.isArray(pool) || pool.length === 0) return [];
   const today = new Date();
   const seed = today.getFullYear() * 1000 + today.getMonth() * 100 + today.getDate();
   const phrases = [];
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < 5; i++) {
     const index = (seed + i) % pool.length;
     phrases.push(pool[index]);
   }
@@ -21,7 +16,7 @@ function getDailyPhrases(pool) {
 }
 
 export default function App() {
-  const [dailyPhrases] = useState(getDailyPhrases(defaultPhrasePool));
+  const [dailyPhrases] = useState(getDailyPhrases(phrasePool));
   const [currentIndex, setCurrentIndex] = useState(0);
   const [guess, setGuess] = useState("");
   const [startTime, setStartTime] = useState(null);
@@ -35,9 +30,10 @@ export default function App() {
   const [name, setName] = useState("");
   const [gameStarted, setGameStarted] = useState(false);
   const [hintUsed, setHintUsed] = useState(false);
-  const [giveUp, setGiveUp] = useState(false);
   const [now, setNow] = useState(Date.now());
   const [revealedAnswer, setRevealedAnswer] = useState(null);
+  const [penaltyTime, setPenaltyTime] = useState(0);
+  const [skippedIndexes, setSkippedIndexes] = useState([]);
 
   useEffect(() => {
     if (gameStarted && !startTime) setStartTime(Date.now());
@@ -55,15 +51,13 @@ export default function App() {
         setEndTime(finish);
         setFinished(true);
         const penalty = hintUsed ? 5000 : 0;
-        const totalTime = (finish - startTime + penalty) / 1000;
-        if (!giveUp) {
-          setLeaderboard(
-            [...leaderboard, { name: name || "You", time: totalTime }]
-              .sort((a, b) => a.time - b.time)
-              .slice(0, 10)
-          );
-          toast.success(`🎉 You finished in ${totalTime.toFixed(1)}s!`);
-        }
+        const totalTime = (finish - startTime + penaltyTime + penalty) / 1000;
+        setLeaderboard(
+          [...leaderboard, { name: name || "You", time: totalTime }]
+            .sort((a, b) => a.time - b.time)
+            .slice(0, 10)
+        );
+        toast.success(`🎉 You finished in ${totalTime.toFixed(1)}s!`);
       } else {
         setCurrentIndex(currentIndex + 1);
         setGuess("");
@@ -79,20 +73,51 @@ export default function App() {
   const handleHint = () => {
     if (!dailyPhrases[currentIndex]) return;
     setHintUsed(true);
+    const answer = dailyPhrases[currentIndex].answer || "";
     const hint =
       dailyPhrases[currentIndex].hint ||
-      `Starts with "${dailyPhrases[currentIndex].answer.split(" ")[0]}"`;
+      (answer ? `Starts with "${answer.split(" ")[0]}"` : "No hint available");
     toast.info(`💡 Hint: ${hint}`);
   };
 
-  const handleGiveUp = () => {
+  const handleSkip = () => {
     if (!dailyPhrases[currentIndex]) return;
     const answer = dailyPhrases[currentIndex].answer;
+
+    // Add 10s penalty
+    setPenaltyTime(penaltyTime + 10000);
+
+    // Mark skipped
+    setSkippedIndexes([...skippedIndexes, currentIndex]);
+
+    // Temporarily show skipped answer
     setRevealedAnswer(answer);
-    toast.error(`😢 Gave Up! Answer was: ${answer}`);
-    setGiveUp(true);
-    setEndTime(Date.now());
-    setFinished(true);
+    toast.warning(
+      <div>
+        <div>⏩ Skipped! +10s penalty</div>
+        <div>Answer was: <strong>{answer}</strong></div>
+      </div>
+    );
+
+    setTimeout(() => {
+      if (currentIndex === dailyPhrases.length - 1) {
+        const finish = Date.now();
+        setEndTime(finish);
+        setFinished(true);
+        const penalty = hintUsed ? 5000 : 0;
+        const totalTime = (finish - startTime + penaltyTime + penalty) / 1000;
+        setLeaderboard(
+          [...leaderboard, { name: name || "You", time: totalTime }]
+            .sort((a, b) => a.time - b.time)
+            .slice(0, 10)
+        );
+        toast.error(`Game Over! Final time: ${totalTime.toFixed(1)}s`);
+      } else {
+        setCurrentIndex(currentIndex + 1);
+        setGuess("");
+        setRevealedAnswer(null);
+      }
+    }, 2000);
   };
 
   const handleKeyDown = (e) => {
@@ -107,7 +132,12 @@ export default function App() {
     }
   };
 
-  const elapsed = startTime && !finished ? (now - startTime) / 1000 : endTime ? (endTime - startTime) / 1000 : 0;
+  const elapsed =
+    startTime && !finished
+      ? (now - startTime + penaltyTime) / 1000
+      : endTime
+      ? (endTime - startTime + penaltyTime) / 1000
+      : 0;
 
   if (!gameStarted) {
     return (
@@ -167,20 +197,22 @@ export default function App() {
         {!finished ? (
           <div className="flex flex-col space-y-4">
             <h1 className="text-2xl font-bold text-center">Guess the Phrase</h1>
+
+            {/* Progress dots */}
             <div className="flex justify-center space-x-2">
-              {dailyPhrases.map((_, idx) => (
-                <span
-                  key={idx}
-                  className={`w-4 h-4 rounded-full ${
-                    idx < currentIndex
-                      ? "bg-green-500"
-                      : idx === currentIndex
-                      ? "bg-yellow-400"
-                      : "bg-gray-300"
-                  }`}
-                />
-              ))}
+              {dailyPhrases.map((_, idx) => {
+                let color = "bg-gray-300"; // default upcoming
+                if (idx < currentIndex && skippedIndexes.includes(idx)) {
+                  color = "bg-red-500"; // skipped
+                } else if (idx < currentIndex) {
+                  color = "bg-green-500"; // solved
+                } else if (idx === currentIndex) {
+                  color = "bg-yellow-400"; // current
+                }
+                return <span key={idx} className={`w-4 h-4 rounded-full ${color}`} />;
+              })}
             </div>
+
             {dailyPhrases[currentIndex] && (
               <p className="text-xl text-center text-gray-700">
                 {dailyPhrases[currentIndex].gibberish}
@@ -210,7 +242,7 @@ export default function App() {
             <div className="flex space-x-2">
               <button onClick={handleSubmit} className="bg-blue-600 text-white rounded px-3 py-2">Submit</button>
               <button onClick={handleHint} className="border rounded px-3 py-2">Hint (+5s)</button>
-              <button onClick={handleGiveUp} className="bg-red-600 text-white rounded px-3 py-2">Give Up</button>
+              <button onClick={handleSkip} className="bg-yellow-500 text-white rounded px-3 py-2">Skip (+10s)</button>
             </div>
             {revealedAnswer && (
               <p className="text-center text-red-600 font-semibold">Answer: {revealedAnswer}</p>
@@ -218,27 +250,23 @@ export default function App() {
           </div>
         ) : (
           <div className="flex flex-col space-y-4 items-center">
-            <h2 className="text-xl font-bold">{giveUp ? "Game Over" : "🎉 You finished!"}</h2>
-            {giveUp && revealedAnswer && (
+            <h2 className="text-xl font-bold">🎉 Game Over</h2>
+            {revealedAnswer && (
               <p className="text-red-600 font-semibold">Answer: {revealedAnswer}</p>
             )}
-            <p>Total Time: {((endTime - startTime) / 1000).toFixed(1)} seconds</p>
-            {!giveUp && (
-              <>
-                <h3 className="text-lg font-semibold">Leaderboard</h3>
-                <ul className="w-full">
-                  {leaderboard.map((entry, i) => (
-                    <li
-                      key={i}
-                      className="flex justify-between border-b py-1 text-gray-800"
-                    >
-                      <span>{entry.name}</span>
-                      <span>{entry.time.toFixed(1)}s</span>
-                    </li>
-                  ))}
-                </ul>
-              </>
-            )}
+            <p>Total Time: {((endTime - startTime + penaltyTime) / 1000).toFixed(1)} seconds</p>
+            <h3 className="text-lg font-semibold">Leaderboard</h3>
+            <ul className="w-full">
+              {leaderboard.map((entry, i) => (
+                <li
+                  key={i}
+                  className="flex justify-between border-b py-1 text-gray-800"
+                >
+                  <span>{entry.name}</span>
+                  <span>{entry.time.toFixed(1)}s</span>
+                </li>
+              ))}
+            </ul>
           </div>
         )}
       </div>

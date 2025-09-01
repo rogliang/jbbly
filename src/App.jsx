@@ -2,11 +2,15 @@ import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
 import phrasePool from "./phrasePool.json";
+import { supabase } from "./supabaseClient";
 
 function getDailyPhrases(pool) {
   if (!Array.isArray(pool) || pool.length === 0) return [];
   const today = new Date();
-  const seed = today.getFullYear() * 1000 + today.getMonth() * 100 + today.getDate();
+  const seed =
+    today.getUTCFullYear() * 1000 +
+    today.getUTCMonth() * 100 +
+    today.getUTCDate(); // UTC for consistency
   const phrases = [];
   for (let i = 0; i < 5; i++) {
     const index = (seed + i) % pool.length;
@@ -23,10 +27,7 @@ export default function App() {
   const [endTime, setEndTime] = useState(null);
   const [finished, setFinished] = useState(false);
   const [wrongGuess, setWrongGuess] = useState(false);
-  const [leaderboard, setLeaderboard] = useState([
-    { name: "Alice", time: 42.1 },
-    { name: "Bob", time: 55.4 }
-  ]);
+  const [leaderboard, setLeaderboard] = useState([]);
   const [name, setName] = useState("");
   const [gameStarted, setGameStarted] = useState(false);
   const [hintUsed, setHintUsed] = useState(false);
@@ -42,7 +43,67 @@ export default function App() {
     return () => clearInterval(interval);
   }, [startTime, gameStarted, finished]);
 
-  const handleSubmit = () => {
+  // Fetch leaderboard + subscribe for realtime updates
+  useEffect(() => {
+    const fetchLeaderboard = async () => {
+      let { data, error } = await supabase
+        .from("leaderboard")
+        .select("*")
+        .order("time", { ascending: true })
+        .limit(10);
+
+      if (!error && data) setLeaderboard(data);
+    };
+
+    fetchLeaderboard();
+
+    const subscription = supabase
+      .channel("leaderboard-changes")
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "leaderboard" },
+        (payload) => {
+          console.log("New score added:", payload.new);
+          fetchLeaderboard();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(subscription);
+    };
+  }, []);
+
+  const saveScore = async (playerName, totalTime) => {
+  const { error } = await supabase
+    .from("leaderboard")
+    .insert([{ name: playerName, time: totalTime }]);
+
+  if (error) {
+    console.error("❌ Error saving score:", error);
+  } else {
+    // Immediately refresh leaderboard
+    let { data, error: fetchError } = await supabase
+      .from("leaderboard")
+      .select("*")
+      .order("time", { ascending: true })
+      .limit(10);
+
+    if (!fetchError && data) {
+      setLeaderboard(data);
+
+      // Optional: highlight the player if they’re in top 10
+      const isTop10 = data.some((entry) => entry.name === playerName && entry.time === totalTime);
+      if (isTop10) {
+        toast.success("🎉 You made the Top 10!");
+      }
+    }
+  }
+};
+
+
+
+  const handleSubmit = async () => {
     if (!dailyPhrases[currentIndex]) return;
     const currentPhrase = dailyPhrases[currentIndex];
     if (guess.trim().toLowerCase() === currentPhrase.answer.toLowerCase()) {
@@ -52,11 +113,7 @@ export default function App() {
         setFinished(true);
         const penalty = hintUsed ? 5000 : 0;
         const totalTime = (finish - startTime + penaltyTime + penalty) / 1000;
-        setLeaderboard(
-          [...leaderboard, { name: name || "You", time: totalTime }]
-            .sort((a, b) => a.time - b.time)
-            .slice(0, 10)
-        );
+        await saveScore(name || "You", totalTime);
         toast.success(`🎉 You finished in ${totalTime.toFixed(1)}s!`);
       } else {
         setCurrentIndex(currentIndex + 1);
@@ -77,40 +134,39 @@ export default function App() {
     const hint =
       dailyPhrases[currentIndex].hint ||
       (answer ? `Starts with "${answer.split(" ")[0]}"` : "No hint available");
-    toast.info(`💡 Hint: ${hint}`);
+    toast.info(
+      <div>
+        <div>💡 Hint:</div>
+        <div>{hint}</div>
+      </div>
+    );
   };
 
-  const handleSkip = () => {
+  const handleSkip = async () => {
     if (!dailyPhrases[currentIndex]) return;
     const answer = dailyPhrases[currentIndex].answer;
 
-    // Add 10s penalty
     setPenaltyTime(penaltyTime + 10000);
-
-    // Mark skipped
     setSkippedIndexes([...skippedIndexes, currentIndex]);
 
-    // Temporarily show skipped answer
     setRevealedAnswer(answer);
     toast.warning(
       <div>
         <div>⏩ Skipped! +10s penalty</div>
-        <div>Answer was: <strong>{answer}</strong></div>
+        <div>
+          Answer was: <strong>{answer}</strong>
+        </div>
       </div>
     );
 
-    setTimeout(() => {
+    setTimeout(async () => {
       if (currentIndex === dailyPhrases.length - 1) {
         const finish = Date.now();
         setEndTime(finish);
         setFinished(true);
         const penalty = hintUsed ? 5000 : 0;
         const totalTime = (finish - startTime + penaltyTime + penalty) / 1000;
-        setLeaderboard(
-          [...leaderboard, { name: name || "You", time: totalTime }]
-            .sort((a, b) => a.time - b.time)
-            .slice(0, 10)
-        );
+        await saveScore(name || "You", totalTime);
         toast.error(`Game Over! Final time: ${totalTime.toFixed(1)}s`);
       } else {
         setCurrentIndex(currentIndex + 1);
@@ -121,15 +177,11 @@ export default function App() {
   };
 
   const handleKeyDown = (e) => {
-    if (e.key === "Enter") {
-      handleSubmit();
-    }
+    if (e.key === "Enter") handleSubmit();
   };
 
   const handleNameKeyDown = (e) => {
-    if (e.key === "Enter" && name.trim()) {
-      setGameStarted(true);
-    }
+    if (e.key === "Enter" && name.trim()) setGameStarted(true);
   };
 
   const elapsed =
@@ -183,7 +235,7 @@ export default function App() {
         <div className="w-40">
           <h3 className="text-sm font-semibold mb-1">🏆 Top 10</h3>
           <ul className="text-xs">
-            {leaderboard.slice(0, 10).map((entry, i) => (
+            {leaderboard.map((entry, i) => (
               <li key={i} className="flex justify-between border-b py-0.5">
                 <span>{entry.name}</span>
                 <span>{entry.time.toFixed(1)}s</span>
@@ -201,7 +253,7 @@ export default function App() {
             {/* Progress dots */}
             <div className="flex justify-center space-x-2">
               {dailyPhrases.map((_, idx) => {
-                let color = "bg-gray-300"; // default upcoming
+                let color = "bg-gray-300";
                 if (idx < currentIndex && skippedIndexes.includes(idx)) {
                   color = "bg-red-500"; // skipped
                 } else if (idx < currentIndex) {
@@ -209,7 +261,12 @@ export default function App() {
                 } else if (idx === currentIndex) {
                   color = "bg-yellow-400"; // current
                 }
-                return <span key={idx} className={`w-4 h-4 rounded-full ${color}`} />;
+                return (
+                  <span
+                    key={idx}
+                    className={`w-4 h-4 rounded-full ${color}`}
+                  />
+                );
               })}
             </div>
 
@@ -240,21 +297,38 @@ export default function App() {
               </motion.div>
             </AnimatePresence>
             <div className="flex space-x-2">
-              <button onClick={handleSubmit} className="bg-blue-600 text-white rounded px-3 py-2">Submit</button>
-              <button onClick={handleHint} className="border rounded px-3 py-2">Hint (+5s)</button>
-              <button onClick={handleSkip} className="bg-yellow-500 text-white rounded px-3 py-2">Skip (+10s)</button>
+              <button
+                onClick={handleSubmit}
+                className="bg-blue-600 text-white rounded px-3 py-2"
+              >
+                Submit
+              </button>
+              <button
+                onClick={handleHint}
+                className="border rounded px-3 py-2"
+              >
+                Hint (+5s)
+              </button>
+              <button
+                onClick={handleSkip}
+                className="bg-yellow-500 text-white rounded px-3 py-2"
+              >
+                Skip (+10s)
+              </button>
             </div>
             {revealedAnswer && (
-              <p className="text-center text-red-600 font-semibold">Answer: {revealedAnswer}</p>
+              <p className="text-center text-red-600 font-semibold">
+                Answer: {revealedAnswer}
+              </p>
             )}
           </div>
         ) : (
           <div className="flex flex-col space-y-4 items-center">
             <h2 className="text-xl font-bold">🎉 Game Over</h2>
-            {revealedAnswer && (
-              <p className="text-red-600 font-semibold">Answer: {revealedAnswer}</p>
-            )}
-            <p>Total Time: {((endTime - startTime + penaltyTime) / 1000).toFixed(1)} seconds</p>
+            <p>
+              Total Time:{" "}
+              {((endTime - startTime + penaltyTime) / 1000).toFixed(1)} seconds
+            </p>
             <h3 className="text-lg font-semibold">Leaderboard</h3>
             <ul className="w-full">
               {leaderboard.map((entry, i) => (

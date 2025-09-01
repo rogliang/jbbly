@@ -142,7 +142,7 @@ export default function App() {
   return (
     <div className="min-h-screen flex flex-col items-center bg-gray-100 p-6">
       <div className="w-full max-w-4xl flex justify-start mb-4 items-center">
-        <img src="/logo.svg" alt="jbbly logo" className="h-10 mr-2" />
+        <img src="/logo.png" alt="jbbly logo" className="h-10 mr-2" />
         <h1 className="text-3xl font-extrabold text-blue-600">
           jbbly<span className="text-orange-500">.co</span>
         </h1>

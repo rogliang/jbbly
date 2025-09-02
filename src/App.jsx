@@ -214,7 +214,16 @@ export default function App() {
           </h1>
         </div>
         <div className="w-full max-w-md shadow-xl p-6 bg-white rounded-lg">
-          <h1 className="text-xl font-bold text-center">Enter Your Name</h1>
+
+          {/* 🔹 Basic instructions in gray box */}
+          <div className="mb-8 p-4 bg-gray-100 border border-gray-300 rounded-lg text-sm text-gray-700 space-y-1">
+            <p>🎯 Decode 5 gibberish phrases into real words.</p>
+            <p>⏱️ Beat your time — skips and hints add penalties.</p>
+            <p>🏆 Make the Top 10 leaderboard and share your score!</p>
+          </div>
+
+          <h1 className="text-xl font-bold text-center mt-8">Enter Your Name</h1>
+
           <input
             placeholder="Your name"
             className="border rounded px-3 py-2 w-full mt-3"
@@ -229,6 +238,7 @@ export default function App() {
           >
             Start Game
           </button>
+
         </div>
       </div>
     );

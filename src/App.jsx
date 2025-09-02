@@ -4,19 +4,32 @@ import { toast } from "sonner";
 import phrasePool from "./phrasePool.json";
 import { supabase } from "./supabaseClient";
 
+function mulberry32(seed) {
+  return function () {
+    let t = (seed += 0x6D2B79F5);
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+
 function getDailyPhrases(pool) {
   if (!Array.isArray(pool) || pool.length === 0) return [];
+
   const today = new Date();
   const seed =
-    today.getUTCFullYear() * 1000 +
-    today.getUTCMonth() * 100 +
-    today.getUTCDate(); // UTC for consistency
-  const phrases = [];
-  for (let i = 0; i < 5; i++) {
-    const index = (seed + i) % pool.length;
-    phrases.push(pool[index]);
-  }
-  return phrases;
+    today.getUTCFullYear() * 10000 +
+    (today.getUTCMonth() + 1) * 100 +
+    today.getUTCDate();
+
+  const rng = mulberry32(seed);
+
+  // Shuffle deterministically
+  const shuffled = [...pool].sort(() => rng() - 0.5);
+
+  // Pick first 5
+  return shuffled.slice(0, 5);
 }
 
 export default function App() {
